@@ -1,0 +1,233 @@
+# ===========================
+# Go
+# ===========================
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.txt
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# ===========================
+# Build Outputs
+# ===========================
+/bin/
+/build/
+/dist/
+gateway
+issuer
+upstream
+wallet-cli
+
+# ===========================
+# Temporary & Runtime Files
+# ===========================
+/tmp/
+*.log
+*.pid
+*.seed
+*.tmp
+*.swp
+*.swo
+*~
+
+# ===========================
+# Credentials & Secrets
+# ===========================
+# Wallet files
+wallet.json
+*.wallet
+
+# Credentials
+*.jwt
+*.cred
+cred.jwt
+
+# Private keys
+*.pem
+*.key
+*.p12
+*.pfx
+keys.json
+/data/issuer/keys.json
+
+# Secrets
+secrets.yaml
+.env
+.env.local
+.env.*.local
+
+# ===========================
+# Database
+# ===========================
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# PostgreSQL
+*.sql.gz
+/backups/
+
+# ===========================
+# Docker
+# ===========================
+docker-compose.override.yml
+.dockerignore
+
+# ===========================
+# Kubernetes
+# ===========================
+# Secrets (don't commit actual secrets)
+*-secrets.yaml
+secrets/
+
+# Local kubeconfig
+kubeconfig
+.kube/
+
+# Helm
+charts/*/charts/
+charts/*/*.tgz
+
+# ===========================
+# IDE & Editors
+# ===========================
+# VSCode
+.vscode/
+*.code-workspace
+
+# GoLand / IntelliJ
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# ===========================
+# OS Files
+# ===========================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ===========================
+# Test & Load Testing
+# ===========================
+# k6 results
+/test/load/results/
+*.html
+summary.json
+
+# Test data
+/test/data/
+testdata/
+
+# ===========================
+# Monitoring & Logging
+# ===========================
+# Prometheus
+prometheus_data/
+
+# Grafana
+grafana_data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ===========================
+# Certificates (for local dev)
+# ===========================
+# TLS certificates (keep templates, ignore actual certs)
+*.crt
+*.cer
+*.cert
+!*-template.crt
+
+# Certificate signing requests
+*.csr
+
+# ===========================
+# Cache & Temporary
+# ===========================
+.cache/
+*.cache
+
+# Redis dump
+dump.rdb
+
+# ===========================
+# Documentation Build
+# ===========================
+/site/
+.hugo/
+
+# ===========================
+# CI/CD
+# ===========================
+.github/workflows/*.generated.yaml
+
+# ===========================
+# Project Specific
+# ===========================
+# Generated DID documents (test files)
+/test/did-web-server/*.well-known/did.json
+/test/did-web-server/data/
+
+# Backup files
+*.bak
+*.backup
+
+# Development databases
+dev.db
+test.db
+
+# Local configuration overrides
+config.local.yaml
+settings.local.json

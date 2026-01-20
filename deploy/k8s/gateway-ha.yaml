@@ -1,0 +1,192 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: did-gateway
+  namespace: default
+  labels:
+    app: did-gateway
+    version: v1
+spec:
+  replicas: 6  # 2 per zone for 3-zone setup
+  
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1  # Only 1 pod down at a time
+      maxSurge: 2        # Can create 2 extra pods during update
+  
+  selector:
+    matchLabels:
+      app: did-gateway
+  
+  template:
+    metadata:
+      labels:
+        app: did-gateway
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    
+    spec:
+      # High availability: spread across zones
+      affinity:
+        # Anti-affinity: prefer different zones
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: topology.kubernetes.io/zone
+              labelSelector:
+                matchLabels:
+                  app: did-gateway
+          # Also spread across nodes within zone
+          - weight: 50
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: did-gateway
+      
+      # Topology spread: enforce even distribution
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: did-gateway
+      
+      # Service account for accessing secrets
+      serviceAccountName: did-gateway
+      
+      # Security context
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      
+      containers:
+      - name: gateway
+        image: did-gateway:latest
+        imagePullPolicy: IfNotPresent
+        
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+       
+- name: metrics
+          containerPort: 9090
+          protocol: TCP
+        
+        env:
+        - name: GATEWAY_ADDR
+          value: ":8080"
+        - name: REDIS_ADDR
+          value: "redis-sentinel:26379"
+        - name: POSTGRES_DSN
+          valueFrom:
+            secretKeyRef:
+              name: gateway-secrets
+              key: postgres-dsn
+        - name: TOKEN_ISSUER
+          value: "gateway"
+        
+        # Resource limits for proper HPA scaling
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+        
+        # Liveness probe: is the process alive?
+        livenessProbe:
+          httpGet:
+            path: /healthz/live
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        
+        # Readiness probe: can it serve traffic?
+        readinessProbe:
+          httpGet:
+            path: /healthz/ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 2
+        
+        # Startup probe: initial startup (longer timeout)
+        startupProbe:
+          httpGet:
+            path: /healthz/live
+            port: 8080
+          initialDelaySeconds: 0
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 30  # 30*5s = 150s max startup time
+        
+        # Graceful shutdown
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 15"]
+        
+        # Security hardening
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        # Temporary volume for writable paths
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 30
+      
+      # DNS configuration for faster DNS resolution
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "1"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: did-gateway
+  namespace: default
+  labels:
+    app: did-gateway
+spec:
+  type: ClusterIP
+  sessionAffinity: None
+  selector:
+    app: did-gateway
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+    protocol: TCP

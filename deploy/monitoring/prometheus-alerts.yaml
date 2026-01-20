@@ -1,0 +1,184 @@
+groups:
+  - name: did_gateway_alerts
+    interval: 30s
+    rules:
+      # Critical Alerts - Page On-Call
+      - alert: GatewayDown
+        expr: up{job="did-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: "DID Gateway is down"
+          description: "Gateway instance {{ $labels.instance }} has been down for more than 2 minutes."
+          runbook_url: "https://runbook.example.com/gateway-down"
+
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="did-gateway",code=~"5.."}[5m])) 
+          / 
+          sum(rate(http_requests_total{job="did-gateway"}[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          runbook_url: "https://runbook.example.com/high-error-rate"
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket{job="did-gateway"}[5m])) by (le)
+          ) > 0.5
+        for: 10m
+        labels:
+          severity: critical
+          component: gateway
+        annotations:
+          summary: "High latency detected"
+          description: "P99 latency is {{ $value }}s (threshold: 500ms)"
+          runbook_url: "https://runbook.example.com/high-latency"
+
+      - alert: DatabaseConnectionFailure
+        expr: |
+          sum(rate(database_errors_total{job="did-gateway",type="connection"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+          component: database
+        annotations:
+          summary: "Database connection failures detected"
+          description: "Database connection errors detected for {{ $labels.instance }}"
+          runbook_url: "https://runbook.example.com/database-connection-failure"
+
+      # Warning Alerts - Slack Notification
+      - alert: HighRateLimitHits
+        expr: rate(rate_limit_exceeded_total{job="did-gateway"}[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          component: gateway
+        annotations:
+          summary: "High rate limit hits"
+          description: "Rate limit exceeded {{ $value }} times/sec"
+
+      - alert: DIDResolutionFailures
+        expr: |
+          sum(rate(did_resolve_errors_total{job="did-gateway"}[5m])) 
+          / 
+          sum(rate(did_resolve_total{job="did-gateway"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: did_resolver
+        annotations:
+          summary: "High DID resolution failure rate"
+          description: "DID resolution failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: VCVerificationFailures
+        expr: |
+          sum(rate(vc_verify_total{job="did-gateway",status="failed"}[5m])) 
+          / 
+          sum(rate(vc_verify_total{job="did-gateway"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          component: vc_verifier
+        annotations:
+          summary: "High VC verification failure rate"
+          description: "VC verification failure rate is {{ $value | humanizePercentage }}"
+
+      - alert: LowCacheHitRate
+        expr: |
+          sum(rate(did_resolve_cache_hits_total{job="did-gateway"}[5m])) 
+          / 
+          sum(rate(did_resolve_total{job="did-gateway"}[5m])) < 0.5
+        for: 15m
+        labels:
+          severity: warning
+          component: cache
+        annotations:
+          summary: "Low DID cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} (expected >50%)"
+
+      - alert: HighMemoryUsage
+        expr: |
+          (process_resident_memory_bytes{job="did-gateway"} 
+          / 
+          kube_pod_container_resource_limits{resource="memory"}) > 0.8
+        for: 10m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} of limit"
+
+      - alert: HighCPUUsage
+        expr: |
+          rate(process_cpu_seconds_total{job="did-gateway"}[5m]) > 0.8
+        for: 15m
+        labels:
+          severity: warning
+          component: resources
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value | humanizePercentage }}"
+
+      - alert: CertificateExpiringSoon
+        expr: |
+          (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 7
+        for: 1h
+        labels:
+          severity: warning
+          component: certificates
+        annotations:
+          summary: "TLS certificate expiring soon"
+          description: "Certificate {{ $labels.name }} expires in {{ $value }} days"
+
+      # Info Alerts - For tracking
+      - alert: PodRestarted
+        expr: rate(kube_pod_container_status_restarts_total{pod=~"did-gateway-.*"}[15m]) > 0
+        for: 5m
+        labels:
+          severity: info
+          component: pod
+        annotations:
+          summary: "Pod restarted"
+          description: "Pod {{ $labels.pod }} has restarted {{ $value }} times"
+
+  - name: slo_alerts
+    interval: 30s
+    rules:
+      # SLO: 99.9% availability (43 minutes downtime/month)
+      - alert: SLOAvailabilityBreach
+        expr: |
+          1 - (
+            sum(rate(http_requests_total{job="did-gateway",code!~"5.."}[30d]))
+            /
+            sum(rate(http_requests_total{job="did-gateway"}[30d]))
+          ) < 0.999
+        for: 10m
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "SLO availability breach"
+          description: "30-day availability is {{ $value | humanizePercentage }} (SLO: 99.9%)"
+
+      # SLO: P99 latency < 200ms
+      - alert: SLOLatencyBreach
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(http_request_duration_seconds_bucket{job="did-gateway",path="/v1/auth/verify"}[1h])) by (le)
+          ) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "SLO latency breach"
+          description: "P99 latency is {{ $value }}s (SLO: 200ms)"

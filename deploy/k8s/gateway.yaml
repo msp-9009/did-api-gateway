@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: did-gateway
+spec:
+  replicas: 3  # Increased for HA
+  selector:
+    matchLabels:
+      app: did-gateway
+  template:
+    metadata:
+      labels:
+        app: did-gateway
+    spec:
+      containers:
+        - name: gateway
+          image: did-gateway:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 8443
+              name: https
+          env:
+            - name: GATEWAY_ADDR
+              value: ":8080"
+            - name: GATEWAY_AUDIENCE
+              value: "did-gateway"
+            - name: GATEWAY_DOMAIN
+              value: "api.yourdomain.com"  # CHANGE THIS
+            - name: UPSTREAM_URL
+              value: "http://upstream:8081"
+            - name: REDIS_ADDR
+              value: "redis:6379"
+            - name: POSTGRES_DSN
+              value: "postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable"
+            - name: TOKEN_ISSUER
+              value: "gateway"
+            # Secrets from Kubernetes Secrets
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: admin-token
+            - name: GATEWAY_PASETO_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: paseto-key
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: redis-password
+                  optional: true
+            # Secrets Provider Configuration
+            - name: SECRETS_PROVIDER
+              value: "k8s"
+            - name: SECRETS_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # TLS Configuration
+            - name: TLS_ENABLED
+              value: "true"
+            - name: TLS_CERT_FILE
+              value: "/etc/tls/tls.crt"
+            - name: TLS_KEY_FILE
+              value: "/etc/tls/tls.key"
+            # Token Format
+            - name: TOKEN_FORMAT
+              value: "jwt"  # Change to "paseto" after migration
+            # Security
+            - name: ALLOWED_ORIGINS
+              value: "https://app.yourdomain.com"  # CHANGE THIS
+            - name: MAX_REQUEST_SIZE
+              value: "1048576"  # 1 MB
+          volumeMounts:
+            - name: tls-certs
+              mountPath: /etc/tls
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 2
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: gateway-tls-secret  # From cert-manager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: did-gateway
+spec:
+  selector:
+    app: did-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+    - name: https
+      port: 8443
+      targetPort: 8443
+  type: ClusterIP
+

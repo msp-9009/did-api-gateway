@@ -1,0 +1,147 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: default
+spec:
+  # Run daily at 2 AM
+  schedule: "0 2 * * *"
+  
+  # Keep last 3 successful jobs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  
+  # Don't allow concurrent backups
+  concurrencyPolicy: Forbid
+  
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: postgres-backup
+        spec:
+          restartPolicy: OnFailure
+          
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 1000
+          
+          containers:
+          - name: backup
+            image: postgres:16
+            command: ["/scripts/backup-postgres.sh"]
+            
+            env:
+            - name: POSTGRES_HOST
+              value: "postgres"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_USER
+              value: "gateway"
+            - name: POSTGRES_DB
+              value: "gateway"
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gateway-secrets
+                  key: postgres-password
+            - name: BACKUP_DIR
+              value: "/backups"
+            - name: RETENTION_DAYS
+              value: "7"
+            - name: S3_BUCKET
+              value: "my-did-gateway-backups"
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: s3-credentials
+                  key: secret-access-key
+                  optional: true
+            
+            volumeMounts:
+            - name: backup-scripts
+              mountPath: /scripts
+            - name: backups
+              mountPath: /backups
+            
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+          
+          volumes:
+          - name: backup-scripts
+            configMap:
+              name: backup-scripts
+              defaultMode: 0755
+          - name: backups
+            persistentVolumeClaim:
+              claimName: postgres-backups
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backups
+  namespace: default
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: standard
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-scripts
+  namespace: default
+data:
+  backup-postgres.sh: |
+    #!/bin/bash
+    # Inline backup script for CronJob
+    set -eo pipefail
+    
+    BACKUP_DIR="${BACKUP_DIR:-/backups/postgres}"
+    RETENTION_DAYS="${RETENTION_DAYS:-7}"
+    S3_BUCKET="${S3_BUCKET:-}"
+    TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+    BACKUP_FILE="postgres_backup_${TIMESTAMP}.sql.gz"
+    
+    echo "Starting PostgreSQL backup: $BACKUP_FILE"
+    mkdir -p "$BACKUP_DIR"
+    
+    PGPASSWORD="$POSTGRES_PASSWORD" pg_dump \
+        -h "$POSTGRES_HOST" \
+        -p "$POSTGRES_PORT" \
+        -U "$POSTGRES_USER" \
+        -d "$POSTGRES_DB" \
+        --format=custom \
+        --compress=9 \
+        | gzip > "$BACKUP_DIR/$BACKUP_FILE"
+    
+    echo "Backup created: $(du -h "$BACKUP_DIR/$BACKUP_FILE" | cut -f1)"
+    
+    if [ -n "$S3_BUCKET" ]; then
+        echo "Uploading to S3..."
+        aws s3 cp "$BACKUP_DIR/$BACKUP_FILE" "s3://$S3_BUCKET/postgres-backups/"
+        echo "Uploaded to S3"
+    fi
+    
+    echo "Cleaning up old backups..."
+    find "$BACKUP_DIR" -name "postgres_backup_*.sql.gz" -mtime +$RETENTION_DAYS -delete
+    
+    echo "Backup complete!"

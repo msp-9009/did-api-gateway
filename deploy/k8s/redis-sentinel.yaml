@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-sentinel-config
+  namespace: default
+data:
+  redis.conf: |
+    port 6379
+    bind 0.0.0.0
+    protected-mode no
+    
+    # Persistence
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    appendonly yes
+    appendfsync everysec
+    
+    # Replication
+    replica-read-only yes
+    replica-serve-stale-data yes
+    
+    # Memory
+    maxmemory 256mb
+    maxmemory-policy allkeys-lru
+  
+  sentinel.conf: |
+    port 26379
+    bind 0.0.0.0
+    
+    # Monitor the master
+    sentinel monitor mymaster redis-0.redis.default.svc.cluster.local 6379 2
+    sentinel down-after-milliseconds mymaster 5000
+    sentinel parallel-syncs mymaster 1
+    sentinel failover-timeout mymaster 10000
+    
+    # Notification scripts (optional)
+    # sentinel notification-script mymaster /scripts/notify.sh
+    # sentinel client-reconfig-script mymaster /scripts/reconfig.sh
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-sentinel
+  namespace: default
+  labels:
+    app: redis-sentinel
+spec:
+  clusterIP: None
+  ports:
+  - name: sentinel
+    port: 26379
+    targetPort: 26379
+  selector:
+    app: redis-sentinel
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: default
+  labels:
+    app: redis-sentinel
+spec:
+  clusterIP: None
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: 6379
+  selector:
+    app: redis-sentinel
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: default
+spec:
+  serviceName: redis
+  replicas: 3
+  selector:
+    matchLabels:
+      app: redis-sentinel
+  
+  template:
+    metadata:
+      labels:
+        app: redis-sentinel
+    spec:
+      # Anti-affinity to spread across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: redis-sentinel
+      
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        fsGroup: 999
+      
+      containers:
+      # Redis container
+      - name: redis
+        image: redis:7
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        ports:
+        - name: redis
+          containerPort: 6379
+        
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        - name: data
+          mountPath: /data
+        
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      # Sentinel container
+      - name: sentinel
+        image: redis:7
+        command:
+        - redis-sentinel
+        - /etc/redis/sentinel.conf
+        ports:
+        - name: sentinel
+          containerPort: 26379
+        
+        volumeMounts:
+        - name: config
+          mountPath: /etc/redis
+        
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        
+        livenessProbe:
+          tcpSocket:
+            port: 26379
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - -p
+            - "26379"
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      volumes:
+      - name: config
+        configMap:
+          name: redis-sentinel-config
+  
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+      storageClassName: standard
